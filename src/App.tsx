@@ -1,48 +1,61 @@
-// src/App.tsx
 import React, { useRef, useState, useEffect } from "react";
+import RealtimeVoiceCard from "./components/RealtimeVoiceCard";
 import {
   connectRealtime,
   disconnectRealtime,
   type RealtimeHandle,
 } from "./lib/realtimeClient";
 
+// אותו משפט פתיחה – נשלח גם מהלקוח כגיבוי נוסף
+const OPENING_LINE =
+  'היי, ברוכים הבאים לתחקיר לקראת הראיון המצולם! איך יהיה נוח שאפנה במהלך השיחה – בלשון זכר, נקבה, או אחרת? ומה השם בבקשה?';
+
 type Status = "idle" | "connecting" | "connected" | "stopped" | "error";
 
 export default function App() {
-  const handleRef = useRef<RealtimeHandle | null>(null);
+  const h = useRef<RealtimeHandle | null>(null);
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState<string | null>(null);
-  const [assistantText, setAssistantText] = useState<string>("");
 
   async function startChat() {
     setStatus("connecting");
     setError(null);
-    setAssistantText("");
 
     try {
-      // 1) בקשת פתיחת סשן מהשרת כדי לקבל client_secret (ephemeral key)
+      // 1) בקשת סשן מהשרת כדי לקבל client_secret
       const res = await fetch("/api/startChat", { method: "POST" });
       const data = await res.json();
-
       if (!res.ok) {
-        throw new Error(
-          (data && (data.error || data.message)) || "startChat failed"
-        );
+        throw new Error((data && (data.error || data.message)) || "startChat failed");
       }
-      const clientSecret: string | undefined =
-        data?.session?.client_secret?.value;
-
-      if (!clientSecret) {
-        throw new Error("Missing client_secret from /api/startChat response");
-      }
+      const clientSecret: string | undefined = data?.session?.client_secret?.value;
+      if (!clientSecret) throw new Error("Missing client_secret from /api/startChat");
 
       // 2) חיבור ל-Realtime
-      handleRef.current = await connectRealtime({
+      h.current = await connectRealtime({
         clientSecret,
-        onAssistantText: (chunk) => {
-          setAssistantText((prev) => prev + chunk);
+        onConnected: () => {
+          setStatus("connected");
+
+          // גיבוי נוסף: שולחים שוב את משפט הפתיחה לאחר עליית הערוץ,
+          // למקרה שהמודל אמר משהו אחר. שולחים פעמיים בהשהיה קצרה.
+          try {
+            const send = (delay: number) =>
+              setTimeout(() => {
+                try {
+                  h.current?.dc?.send(
+                    JSON.stringify({
+                      type: "response.create",
+                      response: { conversation: "none", instructions: OPENING_LINE },
+                    })
+                  );
+                } catch {}
+              }, delay);
+
+            send(120); // מיד אחרי ההתחברות
+            send(500); // חיזוק נוסף
+          } catch {}
         },
-        onConnected: () => setStatus("connected"),
         onDisconnected: () => setStatus("stopped"),
         onError: (e) => {
           const msg =
@@ -61,126 +74,33 @@ export default function App() {
 
   async function stopChat() {
     try {
-      await disconnectRealtime(handleRef.current);
-    } catch (err: unknown) {
-      // לא עוצר את ה-UI אם יש כשל בסגירה
-      console.warn(
-        err instanceof Error ? err.message : typeof err === "string" ? err : String(err)
-      );
+      await disconnectRealtime(h.current);
+    } catch {
+      // מתעלמים משגיאות סגירה
     } finally {
-      handleRef.current = null;
+      h.current = null;
       setStatus("stopped");
     }
   }
 
-  // ניקוי בעת ניווט/ריענון
+  // ניקוי חיבור אם יוצאים מהעמוד
   useEffect(() => {
     return () => {
-      if (handleRef.current) {
-        disconnectRealtime(handleRef.current);
-        handleRef.current = null;
-      }
+      if (h.current) disconnectRealtime(h.current);
     };
   }, []);
 
   return (
-    <div
-      dir="rtl"
-      style={{
-        minHeight: "100vh",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        background: "#f8fafc",
-        fontFamily: "system-ui, Arial",
-      }}
-    >
-      <div
-        style={{
-          width: 640,
-          maxWidth: "92vw",
-          background: "white",
-          borderRadius: 16,
-          boxShadow: "0 10px 30px rgba(0,0,0,0.06)",
-          padding: 24,
-          textAlign: "center",
-        }}
-      >
-        <h1 style={{ marginTop: 0 }}>That Is Me</h1>
-        <p style={{ color: "#475569" }}>
-          לחץ על "התחלת שיחה" כדי להתחיל בשיחה קולית. לאחר האישור למיקרופון.
-        </p>
+    <div className="min-h-screen bg-slate-50">
+      <RealtimeVoiceCard status={status} onStart={startChat} onStop={stopChat} />
 
-        <div style={{ marginTop: 16 }}>
-          {status !== "connected" ? (
-            <button
-              onClick={startChat}
-              disabled={status === "connecting"}
-              style={{
-                padding: "12px 18px",
-                borderRadius: 12,
-                border: "none",
-                background: status === "connecting" ? "#93c5fd" : "#2563eb",
-                color: "white",
-                cursor: status === "connecting" ? "default" : "pointer",
-                fontSize: 16,
-              }}
-            >
-              {status === "connecting" ? "מתחבר..." : "התחלת שיחה"}
-            </button>
-          ) : (
-            <button
-              onClick={stopChat}
-              style={{
-                padding: "12px 18px",
-                borderRadius: 12,
-                border: "1px solid #e2e8f0",
-                background: "white",
-                color: "#0f172a",
-                cursor: "pointer",
-                fontSize: 16,
-              }}
-            >
-              סיום שיחה
-            </button>
-          )}
-        </div>
-
-        {error && (
-          <div
-            style={{
-              marginTop: 16,
-              padding: 12,
-              background: "#fee2e2",
-              color: "#991b1b",
-              borderRadius: 12,
-              textAlign: "right",
-              fontSize: 14,
-            }}
-          >
+      {error && (
+        <div dir="rtl" className="mx-auto mt-4 w-[680px] max-w-[92vw]">
+          <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-rose-800">
             שגיאה: {error}
           </div>
-        )}
-
-        {assistantText && (
-          <div
-            style={{
-              marginTop: 16,
-              padding: 12,
-              background: "#f1f5f9",
-              color: "#0f172a",
-              borderRadius: 12,
-              textAlign: "right",
-              minHeight: 60,
-              whiteSpace: "pre-wrap",
-              lineHeight: 1.5,
-              fontSize: 15,
-            }}
-          >
-            {assistantText}
-          </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
