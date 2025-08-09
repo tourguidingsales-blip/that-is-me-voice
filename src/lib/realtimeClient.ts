@@ -1,13 +1,22 @@
-// ... יצירת ה-RTCPeerConnection וה-DataChannel כרגיל
+// ... קוד קיים ליצירת RTCPeerConnection וכו' ...
+
 const dc = pc.createDataChannel("oai-events");
 
 dc.onopen = () => {
-  // נכפה את הקול ל-alloy גם אם השרת לא קבע
-  try {
-    dc.send(JSON.stringify({
-      type: "session.update",
-      session: { voice: "alloy" }   // <-- כאן הקסם
-    }));
-  } catch {}
+  // קובע שוב voice ל-alloy (גיבוי)
+  dc.send(JSON.stringify({
+    type: "session.update",
+    session: { voice: "alloy" }
+  }));
+
+  // מכריח פתיחה במשפט המדויק
+  dc.send(JSON.stringify({
+    type: "response.create",
+    response: {
+      instructions:
+        'אמרי בדיוק, מילה במילה, ללא תוספות לפני/אחרי: "היי, ברוכים הבאים לתחקיר לקראת הראיון המצולם! איך יהיה נוח שאפנה במהלך השיחה – בלשון זכר, נקבה, או אחרת? ומה השם בבקשה?"'
+    }
+  }));
+
   opts.onConnected?.();
 };
