@@ -1,6 +1,4 @@
-// api/startChat.ts — Edge Runtime
-// יוצר סשן Realtime כשההנחיות נלקחות ישירות מה-OpenAI Prompt ID (מהדשבורד)
-
+// api/startChat.ts — Edge Runtime (uses PROMPT_TEXT as string)
 export const config = { runtime: "edge" };
 
 export default async function handler(req: Request) {
@@ -11,15 +9,13 @@ export default async function handler(req: Request) {
   const OPENAI_API_KEY = process.env.OPENAI_API_KEY!;
   const SUPABASE_URL = process.env.SUPABASE_URL;
   const SUPABASE_SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE;
-
-  // הגדר כאן את ה-Prompt ID מהדשבורד (או דרך ENV בשם PROMPT_ID)
-  const PROMPT_ID =
-    process.env.PROMPT_ID ||
-    "pmpt_689444b883a881959f896126cb070b630eed2a5504096065"; // ← החלף אם צריך
+  const PROMPT_TEXT =
+    process.env.PROMPT_TEXT ||
+    "את מראיינת נשית, אמפתית ומקצועית. עברית בלבד. אל תפתחי לבד; דברי רק לפי ההנחיות.";
 
   try {
-    // (אופציונלי) יצירת מזהה שיחה ב-Supabase להמשך שמירת תמלול/מטא
-    let conversationId: string;
+    // אופציונלי: יצירת שיחה ב-Supabase
+    let conversationId = crypto.randomUUID();
     if (SUPABASE_URL && SUPABASE_SERVICE_ROLE) {
       const convRes = await fetch(`${SUPABASE_URL}/rest/v1/conversations`, {
         method: "POST",
@@ -34,11 +30,9 @@ export default async function handler(req: Request) {
       if (!convRes.ok) throw new Error(await convRes.text());
       const [conv] = await convRes.json();
       conversationId = conv.id;
-    } else {
-      conversationId = crypto.randomUUID();
     }
 
-    // יצירת session ב-OpenAI Realtime: קול alloy, ללא instructions בטקסט — רק prompt_id
+    // יצירת סשן Realtime – instructions חייב להיות string
     const rt = await fetch("https://api.openai.com/v1/realtime/sessions", {
       method: "POST",
       headers: {
@@ -49,10 +43,8 @@ export default async function handler(req: Request) {
         model: "gpt-4o-realtime-preview",
         modalities: ["audio", "text"],
         voice: "alloy",
-        // השארת turn_detection כבוי כדי שלא תתחיל לדבר לבד לפני הטריגר מהלקוח
         turn_detection: { type: "none" },
-        // חשוב: ההנחיות מגיעות מהדשבורד דרך ה-Prompt ID
-        instructions: { prompt_id: PROMPT_ID },
+        instructions: PROMPT_TEXT, // <-- מחרוזת בלבד
       }),
     });
 
@@ -62,7 +54,6 @@ export default async function handler(req: Request) {
     }
 
     const session = await rt.json();
-
     return new Response(JSON.stringify({ session, conversationId }), {
       headers: { "Content-Type": "application/json" },
     });
