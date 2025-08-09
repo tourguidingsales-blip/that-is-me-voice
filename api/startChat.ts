@@ -1,4 +1,6 @@
-// api/startChat.ts — Edge Runtime (uses PROMPT_TEXT as string)
+// api/startChat.ts — Edge Runtime
+// יוצר סשן Realtime עם קול alloy, פרומפט מטקסט ב-ENV, ו-turn_detection תקין.
+
 export const config = { runtime: "edge" };
 
 export default async function handler(req: Request) {
@@ -9,13 +11,16 @@ export default async function handler(req: Request) {
   const OPENAI_API_KEY = process.env.OPENAI_API_KEY!;
   const SUPABASE_URL = process.env.SUPABASE_URL;
   const SUPABASE_SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE;
+
+  // הפרומפט מגיע מ-ENV כמחרוזת (לא אובייקט!)
   const PROMPT_TEXT =
     process.env.PROMPT_TEXT ||
-    "את מראיינת נשית, אמפתית ומקצועית. עברית בלבד. אל תפתחי לבד; דברי רק לפי ההנחיות.";
+    `את מראיינת נשית, אמפתית ומקצועית. עברית בלבד. 
+אל תפתחי לבד; דברי רק בהתאם לשיחה.`;
 
   try {
-    // אופציונלי: יצירת שיחה ב-Supabase
-    let conversationId = crypto.randomUUID();
+    // אופציונלי: יצירת שורה בטבלת conversations ולהחזיר conversationId
+    let conversationId: string = crypto.randomUUID();
     if (SUPABASE_URL && SUPABASE_SERVICE_ROLE) {
       const convRes = await fetch(`${SUPABASE_URL}/rest/v1/conversations`, {
         method: "POST",
@@ -32,7 +37,7 @@ export default async function handler(req: Request) {
       conversationId = conv.id;
     }
 
-    // יצירת סשן Realtime – instructions חייב להיות string
+    // יצירת Session מול OpenAI Realtime
     const rt = await fetch("https://api.openai.com/v1/realtime/sessions", {
       method: "POST",
       headers: {
@@ -43,8 +48,10 @@ export default async function handler(req: Request) {
         model: "gpt-4o-realtime-preview",
         modalities: ["audio", "text"],
         voice: "alloy",
-        turn_detection: { type: "none" },
-        instructions: PROMPT_TEXT, // <-- מחרוזת בלבד
+        // ערכים תקינים כיום: 'server_vad' או 'semantic_vad'
+        turn_detection: { type: "server_vad" },
+        // חייב להיות STRING (לא prompt_id)!
+        instructions: PROMPT_TEXT,
       }),
     });
 
@@ -54,6 +61,7 @@ export default async function handler(req: Request) {
     }
 
     const session = await rt.json();
+
     return new Response(JSON.stringify({ session, conversationId }), {
       headers: { "Content-Type": "application/json" },
     });
