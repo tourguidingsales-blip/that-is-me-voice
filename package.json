@@ -18,6 +18,7 @@
     "typescript": "^5.3.3",
     "@types/react": "^18.3.5",
     "@types/react-dom": "^18.3.0",
+    "@types/node": "^20.11.19",
     "tailwindcss": "^3.4.3",
     "autoprefixer": "^10.4.17",
     "postcss": "^8.4.35"
