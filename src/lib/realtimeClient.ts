@@ -1,6 +1,4 @@
 // src/lib/realtimeClient.ts
-// חיבור WebRTC למודל Realtime של OpenAI (Edge) + כפיית קול ומשפט פתיחה מדויק.
-
 export type RealtimeHandle = {
   pc: RTCPeerConnection;
   dc?: RTCDataChannel;
@@ -8,7 +6,7 @@ export type RealtimeHandle = {
 };
 
 type ConnectOpts = {
-  clientSecret: string; // ephemeral key שמתקבל מ- /api/startChat
+  clientSecret: string;
   onAssistantText?: (chunk: string) => void;
   onConnected?: () => void;
   onDisconnected?: () => void;
@@ -20,42 +18,36 @@ export async function connectRealtime(opts: ConnectOpts): Promise<RealtimeHandle
     throw new Error("Missing clientSecret (ephemeral key) from /api/startChat");
   }
 
-  // PeerConnection
   const pc = new RTCPeerConnection();
 
-  // אודיו נכנס
   const audioEl = document.createElement("audio");
   audioEl.autoplay = true;
   pc.ontrack = (e) => {
     audioEl.srcObject = e.streams[0];
   };
 
-  // DataChannel לאירועי המודל
   const dc = pc.createDataChannel("oai-events");
 
   dc.onopen = () => {
-    // ננעל קול נשי איכותי (alloy) גם בצד הלקוח
     try {
-      dc.send(
-        JSON.stringify({
-          type: "session.update",
-          session: { voice: "alloy" },
-        })
-      );
-    } catch {}
+      // קביעת קול נשי
+      dc.send(JSON.stringify({
+        type: "session.update",
+        session: { voice: "alloy" }
+      }));
 
-    // נכריח את משפט הפתיחה המדויק – ייאמר מיד כשנפתחת השיחה
-    try {
-      dc.send(
-        JSON.stringify({
-          type: "response.create",
-          response: {
-            instructions:
-              'אמרי בדיוק, מילה במילה, ללא תוספות לפני/אחרי: "היי, ברוכים הבאים לתחקיר לקראת הראיון המצולם! איך יהיה נוח שאפנה במהלך השיחה – בלשון זכר, נקבה, או אחרת? ומה השם בבקשה?"',
-          },
-        })
-      );
-    } catch {}
+      // שליחת משפט פתיחה מדויק בלי קשר לקונטקסט קודם
+      dc.send(JSON.stringify({
+        type: "response.create",
+        response: {
+          conversation: "none", // לא משתמש בהיסטוריית השיחה
+          instructions:
+            'היי, ברוכים הבאים לתחקיר לקראת הראיון המצולם! איך יהיה נוח שאפנה במהלך השיחה – בלשון זכר, נקבה, או אחרת? ומה השם בבקשה?'
+        }
+      }));
+    } catch (err) {
+      opts.onError?.(err);
+    }
 
     opts.onConnected?.();
   };
@@ -63,40 +55,21 @@ export async function connectRealtime(opts: ConnectOpts): Promise<RealtimeHandle
   dc.onclose = () => opts.onDisconnected?.();
   dc.onerror = (e) => opts.onError?.(e);
 
-  // פיענוח טקסטים מהמודל (מגיב גם לדלתות וגם לפלט מלא)
   dc.onmessage = (evt) => {
     try {
       const msg = JSON.parse(evt.data);
-
-      // דלתות טקסט
       if (msg?.type === "response.output_text.delta" && typeof msg.delta === "string") {
         opts.onAssistantText?.(msg.delta);
-        return;
-      }
-      // פלט טקסט מלא
-      if (msg?.type === "response.output_text" && typeof msg.text === "string") {
+      } else if (msg?.type === "response.output_text" && typeof msg.text === "string") {
         opts.onAssistantText?.(msg.text);
-        return;
       }
-      // חלק מהמימושים שולחים אירוע כללי עם 'delta'
-      if (typeof msg?.delta === "string") {
-        opts.onAssistantText?.(msg.delta);
-        return;
-      }
-    } catch {
-      // הודעות לא-JSON – מתעלמים
-    }
+    } catch { }
   };
 
-  // הוספת מיקרופון
   let stream: MediaStream | null = null;
   try {
     stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-      },
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     });
     for (const track of stream.getTracks()) pc.addTrack(track, stream);
   } catch (e) {
@@ -104,7 +77,6 @@ export async function connectRealtime(opts: ConnectOpts): Promise<RealtimeHandle
     throw e;
   }
 
-  // יצירת Offer ושליחתו ל-OpenAI לקבלת Answer
   const offer = await pc.createOffer({ offerToReceiveAudio: true });
   await pc.setLocalDescription(offer);
 
@@ -137,15 +109,9 @@ export async function connectRealtime(opts: ConnectOpts): Promise<RealtimeHandle
     pc,
     dc,
     close: async () => {
-      try {
-        dc?.close();
-      } catch {}
-      try {
-        pc.close();
-      } catch {}
-      try {
-        (stream?.getTracks() || []).forEach((t) => t.stop());
-      } catch {}
+      try { dc?.close(); } catch { }
+      try { pc.close(); } catch { }
+      try { (stream?.getTracks() || []).forEach((t) => t.stop()); } catch { }
     },
   };
 }
