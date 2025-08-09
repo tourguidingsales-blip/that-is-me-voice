@@ -10,8 +10,21 @@ export default async function handler(req: NextRequest) {
   const SUPABASE_SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE!;
 
   try {
-    const { conversationId, messages, end } = await req.json() as { conversationId: string; messages: Message[]; end?: boolean };
-    if (!conversationId || !Array.isArray(messages)) return new Response('bad payload', { status: 400 });
+    const body = await req.json() as { conversationId: string; messages: Message[]; end?: boolean };
+    const { conversationId, messages, end } = body || {};
+
+    console.log("saveTranscript payload", {
+      conversationIdExists: Boolean(conversationId),
+      messagesCount: Array.isArray(messages) ? messages.length : 0,
+      end
+    });
+
+    if (!conversationId || !Array.isArray(messages)) {
+      return new Response(
+        JSON.stringify({ ok:false, where:"validate", detail:"missing conversationId or messages" }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
 
     if (messages.length) {
       const insertRes = await fetch(`${SUPABASE_URL}/rest/v1/messages`, {
@@ -23,11 +36,20 @@ export default async function handler(req: NextRequest) {
         },
         body: JSON.stringify(messages.map(m => ({ conversation_id: conversationId, ...m })))
       });
-      if (!insertRes.ok) throw new Error(await insertRes.text());
+      console.log("insert messages status", insertRes.status);
+
+      if (!insertRes.ok) {
+        const t = await insertRes.text();
+        console.error("supabase insert error", t);
+        return new Response(
+          JSON.stringify({ ok:false, where:"insert messages", detail:t }),
+          { status: 500, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
     }
 
     if (end) {
-      await fetch(`${SUPABASE_URL}/rest/v1/conversations?id=eq.${conversationId}`, {
+      const patchRes = await fetch(`${SUPABASE_URL}/rest/v1/conversations?id=eq.${conversationId}`, {
         method: 'PATCH',
         headers: {
           apikey: SUPABASE_SERVICE_ROLE,
@@ -36,10 +58,15 @@ export default async function handler(req: NextRequest) {
         },
         body: JSON.stringify({ ended_at: new Date().toISOString() })
       });
+      console.log("patch conversation status", patchRes.status);
     }
 
     return new Response(JSON.stringify({ ok: true }), { headers: { 'Content-Type': 'application/json' } });
   } catch (e: any) {
-    return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+    console.error("saveTranscript exception", e?.message || e);
+    return new Response(
+      JSON.stringify({ ok:false, where:"exception", detail: String(e?.message || e) }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } }
+    );
   }
 }
