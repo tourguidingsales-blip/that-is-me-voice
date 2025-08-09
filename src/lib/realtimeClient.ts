@@ -1,5 +1,7 @@
 // src/lib/realtimeClient.ts
-// WebRTC <> OpenAI Realtime + כפיית קול alloy + משפט פתיחה חד-פעמי
+// WebRTC <> OpenAI Realtime
+// ⚠️ אין instructions בצד הלקוח. הדשבורד (Prompt ID) הוא מקור האמת.
+// שולחים טריגר יחיד של response.create כדי שהמודל יפתח לפי הפרומפט בדשבורד.
 
 export type RealtimeHandle = {
   pc: RTCPeerConnection;
@@ -16,10 +18,6 @@ export type ConnectOpts = {
   onError?: (e: unknown) => void;
 };
 
-// משפט פתיחה — חייב להיאמר מילה במילה
-const OPENING_LINE =
-  'היי, ברוכים הבאים לתחקיר לקראת הראיון המצולם! איך יהיה נוח שאפנה במהלך השיחה – בלשון זכר, נקבה, או אחרת? ומה השם בבקשה?';
-
 export async function connectRealtime(opts: ConnectOpts): Promise<RealtimeHandle> {
   if (!opts.clientSecret) throw new Error("Missing clientSecret (ephemeral key)");
 
@@ -34,38 +32,32 @@ export async function connectRealtime(opts: ConnectOpts): Promise<RealtimeHandle
   // 2) DataChannel לאירועי המודל
   const dc = pc.createDataChannel("oai-events");
 
-  // דגל שמבטיח שהברכה תישלח פעם אחת בלבד
-  let greetingSent = false;
+  // לוודא שנטרגר פעם אחת בלבד
+  let triggered = false;
 
   dc.onopen = () => {
     try {
       // קיבוע קול ברמת הסשן (גיבוי לשרת)
-      dc.send(
-        JSON.stringify({
-          type: "session.update",
-          session: { voice: "alloy" },
-        })
-      );
+      dc.send(JSON.stringify({ type: "session.update", session: { voice: "alloy" } }));
 
-      // שולח את משפט הפתיחה – פעם אחת בלבד – כאודיו + טקסט
-      const sendOpening = () => {
-        if (greetingSent) return;
-        greetingSent = true;
+      // טריגר תגובה יחיד — בלי instructions.
+      const trigger = () => {
+        if (triggered) return;
+        triggered = true;
         dc.send(
           JSON.stringify({
             type: "response.create",
             response: {
-              conversation: "none",           // לא משתמש בהיסטוריית שיחה
-              modalities: ["audio", "text"],  // שגם ישמיע קול
-              tts: { voice: "alloy" },        // לוודא קול נשי
-              instructions: OPENING_LINE,
+              conversation: "none",
+              modalities: ["audio", "text"], // שישמיע בקול וגם נחטוף טקסט
+              tts: { voice: "alloy" },       // לוודא קול נשי
             },
           })
         );
       };
 
-      // השהיה קצרה כדי לוודא שהסשן מוכן לפני השליחה
-      setTimeout(sendOpening, 90);
+      // השהיה קצרה כדי לוודא שהסשן מוכן לפני הטריגר
+      setTimeout(trigger, 80);
     } catch (err) {
       opts.onError?.(err);
     }
@@ -76,7 +68,7 @@ export async function connectRealtime(opts: ConnectOpts): Promise<RealtimeHandle
   dc.onclose = () => opts.onDisconnected?.();
   dc.onerror = (e: Event) => opts.onError?.(e);
 
-  // פענוח הודעות טקסט מהמודל (דלתה / מלא)
+  // דלתות/טקסט מלא מהמודל (אם תרצה להציג כתוביות)
   dc.onmessage = (evt: MessageEvent) => {
     try {
       const msg = JSON.parse(String(evt.data));
@@ -88,7 +80,7 @@ export async function connectRealtime(opts: ConnectOpts): Promise<RealtimeHandle
         opts.onAssistantText?.(msg.delta);
       }
     } catch {
-      // ייתכנו פריימים שאינם JSON — מתעלמים
+      // ייתכנו פריימים לא-JSON — מתעלמים
     }
   };
 
@@ -131,31 +123,19 @@ export async function connectRealtime(opts: ConnectOpts): Promise<RealtimeHandle
     throw err;
   }
 
-  const answer: RTCSessionDescriptionInit = {
-    type: "answer",
-    sdp: await sdpRes.text(),
-  };
+  const answer: RTCSessionDescriptionInit = { type: "answer", sdp: await sdpRes.text() };
   await pc.setRemoteDescription(answer);
 
-  // 5) מחזירים Handle עם פונקציית סגירה מסודרת
-  const handle: RealtimeHandle = {
+  return {
     pc,
     dc,
     stream,
     close: async () => {
-      try {
-        dc?.close();
-      } catch {}
-      try {
-        pc.close();
-      } catch {}
-      try {
-        stream?.getTracks().forEach((t) => t.stop());
-      } catch {}
+      try { dc?.close(); } catch {}
+      try { pc.close(); } catch {}
+      try { stream?.getTracks().forEach((t) => t.stop()); } catch {}
     },
   };
-
-  return handle;
 }
 
 export async function disconnectRealtime(handle?: RealtimeHandle | null): Promise<void> {
