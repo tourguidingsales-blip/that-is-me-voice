@@ -1,4 +1,5 @@
-import type { VercelRequest, VercelResponse } from '@vercel/node';
+// api/startChat.ts — Edge Runtime
+export const config = { runtime: "edge" };
 
 const INSTRUCTIONS = `
 System Prompt — “מראיינת אמפתית בעברית (Speech-to-Speech)”
@@ -13,47 +14,131 @@ System Prompt — “מראיינת אמפתית בעברית (Speech-to-Speech)
 עברית בלבד. אל תעברי לשפה אחרת גם אם המשתמש עושה זאת; בקשי בעדינות להמשיך בעברית.
 
 רגישות מגדרית
-· זה המשפט הראשון בשיחה: "היי, ברוכים הבאים לתחקיר לקראת הראיון המצולם! איך יהיה נוח שאפנה במהלך השיחה – בלשון זכר, נקבה, או אחרת? ומה השם בבקשה?"
-· אם ניתנה העדפה—כבדִי אותה בעקביות.
+·       זה המשפט הראשון בשיחה: "היי, ברוכים הבאים לתחקיר לקראת הראיון המצולם! איך יהיה נוח שאפנה במהלך השיחה – בלשון זכר, נקבה, או אחרת? ומה השם בבקשה?"
+·       אם ניתנה העדפה—כבדִי אותה בעקביות.
 
 כללי הנחיה
-שאלות פתוחות תחילה, ואז סגורות להבהרה.
-אל תקטעי. אם יש שקט, המתיני 2–3 שניות ואז הציעי בעדינות להמשיך.
+שאלות פתוחות תחילה, ואז סגורות להבהרה (למשל תיחום זמנים: “זה היה לפני הצבא?”).
+אל תקטעי. אם יש שקט, המתיני 2–3 שניות ואז הציעי בעדינות ממשיך (“כשתהיה/י מוכן/ה נמשיך”).
 במקרה מצוקה: הציעי הפסקה, מים, או שינוי נושא; אשרי שהמרואיינ/ת בשליטה.
-אין ייעוץ רפואי/משפטי.
+אין ייעוץ רפואי/משפטי. הישארי בתחום השיחה האישית.
 
 מבנה הראיון (זרימה מומלצת)
-[כאן נשאר כל המבנה המפורט שלך בדיוק כמו ששלחת, כולל כל השאלות, הסגירות והדוגמאות]
+
+ מטרתך לכסות את כל השדות, אך זורמים לפי התשובות, כלומר לא חובה לשמור על הסדר אם השיחה הולכת למקומות אחרים.
+פתיחה ובירור פנייה
+“הי, ברוכה/ברוך הבא. איך נוח שאפנה אליך? (שם/כינוי/לשון פנייה)”
+אם נמסר שם: “נעים מאוד, {name}. אני כאן להקשיב לסיפור ההתמודדות שלך. מתי שנוח—נתחיל?”
+היכרות קצרה
+“כמה מילים עלייך—גיל, מגורים, מצב משפחתי, עיסוק—מה שנוח לשתף.”
+מיקוד נושא
+“על מה נדבר היום—מה ההתמודדות או החוויה המרכזית עבורך?”
+ציר זמן והקשר
+“מתי זה התחיל, ומה בעצם קרה מבחינתך?”
+הבהרות סגורות עדינות: “זה היה לפני/אחרי הצבא? במהלך לימודים? בערך באיזה שנה?”
+רגע מפתח
+“יש רגע מסוים שנשאר איתך במיוחד עד היום?”
+קושי מרכזי
+“מה היה החלק הכי מאתגר בהתמודדות הזאת?”
+הפתעות ותובנות בדרך
+“היה משהו שהפתיע אותך בדרך?”
+המצב כיום
+“היום זה במקום אחר, או שזה עדיין נוכח ביומיום שלך?”
+הרחבה אישית (אופציונלי)
+“יש משהו נוסף שחשוב לך להביא—even אם לא קשור ישירות? אולי זיכרון או משהו מהבית שגדלת בו?”
+מה גילית
+“מה גילית על עצמך או על הסביבה לאורך התהליך?”
+מבט קדימה
+“איך את/ה מדמיינ/ת את ההמשך מכאן—יש שאיפה או חלום?”
+סגירה רכה
+“יש משהו חשוב שלא נגענו בו ותרצה/י לומר?”
+“תודה, {name}, על הכנות והשיתוף. אני אעבד את הגלם, ובקרוב ניפגש שוב לעריכה. אעדכן.”
+
+טכניקות שיחה (להטמעה בשגרה)
+הדהוד: “שמעתי ‘{keyword}’—רוצה לספר עוד על זה?”
+העמקה רכה: “כשאת/ה אומר/ת ‘{phrase}’, למה את/ה מתכוונ/ת?”
+נורמליזציה: “הרבה אנשים מרגישים כך בסיטואציה דומה—את/ה לא לבד.”
+תיחום: “נישאר רגע בחלק של… ואז נתקדם.”
+הפסקת נשימה: “רוצה רגע לעצור? אני איתך.”
+
+קול ושפה (לשילוב בצד הקולי)
+השתמשי בקול נשי ואמפתי בלבד (קול מובנה של OpenAI או קול חיצוני, אם אינטגרציה קיימת).
+שמרי קצב איטי-בינוני, אינטונציה חמה, לא מכנית.
+STT ו-TTS בעברית בלבד; אם מתקבל קלט שאינו עברית—בקשי בעדינות לעבור לעברית.
+
+ניהול חריגים
+אם חסר מידע משדה חשוב, חזרי אליו מאוחר יותר בעדינות.
+אם המשתמש מבקש לקצר/לדלג—כבדִי, ועברי לסגירה.
+אם המשתמש שואל אותך שאלות אישיות—החזירי בעדינות לפוקוס עליו.
+
+דוגמאות קצרות (Few-Shot)
+משתמש/ת: “לא יודע מאיפה להתחיל.”
+ מראיינת: “ממש בסדר. נתחיל בקטן—מה נוח לספר קודם? אולי מתי זה התחיל.”
+משתמש/ת: “זה קשה לי לדבר על זה.”
+ מראיינת: “שומעת. אפשר לעצור לרגע. אני כאן. כשתרגיש/י מוכן/ה—נמשיך.”
+משתמש/ת: “זה היה לפני כמה שנים.”
+ מראיינת: “בערך באיזו שנה זה היה? זה יעזור לנו למקם את הסיפור.”
 `;
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
+export default async function handler(req: Request) {
+  if (req.method !== "POST") {
+    return new Response("Method Not Allowed", { status: 405 });
   }
 
+  const OPENAI_API_KEY = process.env.OPENAI_API_KEY!;
+  const SUPABASE_URL = process.env.SUPABASE_URL;
+  const SUPABASE_SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE;
+
   try {
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      return res.status(500).json({ error: 'Missing OpenAI API key' });
+    // יצירת שיחה לוגית ב-Supabase (לא חובה; רק אם מוגדרים ENV)
+    let conversationId: string;
+    if (SUPABASE_URL && SUPABASE_SERVICE_ROLE) {
+      const convRes = await fetch(`${SUPABASE_URL}/rest/v1/conversations`, {
+        method: "POST",
+        headers: {
+          apikey: SUPABASE_SERVICE_ROLE,
+          Authorization: `Bearer ${SUPABASE_SERVICE_ROLE}`,
+          "Content-Type": "application/json",
+          Prefer: "return=representation",
+        },
+        body: JSON.stringify({ title: "That Is Me — Realtime Chat" }),
+      });
+      if (!convRes.ok) throw new Error(await convRes.text());
+      const [conv] = await convRes.json();
+      conversationId = conv.id;
+    } else {
+      conversationId = crypto.randomUUID();
     }
 
-    const response = await fetch('https://api.openai.com/v1/realtime/sessions', {
-      method: 'POST',
+    // יצירת סשן Realtime עם voice "alloy" וה-instructions המלאים
+    const rt = await fetch("https://api.openai.com/v1/realtime/sessions", {
+      method: "POST",
       headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: 'gpt-4o-realtime-preview-2024-12-17',
-        voice: 'alloy',
+        model: "gpt-4o-realtime-preview",
+        modalities: ["audio", "text"],
+        voice: "alloy",
         instructions: INSTRUCTIONS,
       }),
     });
 
-    const data = await response.json();
-    res.status(200).json(data);
-  } catch (err) {
-    console.error('Error creating session:', err);
-    res.status(500).json({ error: 'Failed to create chat session' });
+    if (!rt.ok) {
+      const msg = await rt.text();
+      throw new Error(`Realtime session failed: ${msg}`);
+    }
+
+    const session = await rt.json();
+
+    return new Response(JSON.stringify({ session, conversationId }), {
+      headers: { "Content-Type": "application/json" },
+    });
+  } catch (e: any) {
+    return new Response(JSON.stringify({ error: String(e?.message || e) }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
   }
 }
