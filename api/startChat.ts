@@ -2,11 +2,19 @@ import { NextRequest } from "next/server";
 export const config = { runtime: "edge" };
 
 export default async function handler(req: NextRequest) {
-  if (req.method !== "POST") return new Response("Method Not Allowed", { status: 405 });
+  if (req.method !== "POST") {
+    return new Response("Method Not Allowed", { status: 405 });
+  }
 
   const OPENAI_API_KEY = process.env.OPENAI_API_KEY!;
   try {
-    const instructions = `את מראיינת נשית, אמפתית ומקצועית. עברית בלבד...`;
+    const instructions = `
+את מראיינת נשית, אמפתית ומקצועית, מנהלת שיחות עומק רגישות בעברית בלבד לצורך הכנה לראיון מצולם.
+הקול נשי, חם ומזמין. שמרי על שפה פשוטה, משפטים קצרים (5–12 מילים), ודברי לאט וברוגע.
+משפט הפתיחה הראשון שלך חייב להיות בדיוק:
+"היי, ברוכים הבאים לתחקיר לקראת הראיון המצולם! איך יהיה נוח שאפנה במהלך השיחה – בלשון זכר, נקבה, או אחרת? ומה השם בבקשה?"
+לא לשנות ניסוח, לא להוסיף מילים לפני או אחרי.
+    `;
 
     const rt = await fetch("https://api.openai.com/v1/realtime/sessions", {
       method: "POST",
@@ -15,9 +23,9 @@ export default async function handler(req: NextRequest) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "gpt-4o-realtime-preview",   // בלי תאריך סמן
-        modalities: ["audio","text"],
-        voice: "alloy",                     // קול נשי
+        model: "gpt-4o-realtime-preview",
+        modalities: ["audio", "text"],
+        voice: "alloy", // קול נשי
         instructions
       }),
     });
@@ -26,9 +34,13 @@ export default async function handler(req: NextRequest) {
       const msg = await rt.text();
       throw new Error(`Realtime session failed: ${msg}`);
     }
+
     const session = await rt.json();
-    return new Response(JSON.stringify({ session }), { headers: { "Content-Type": "application/json" } });
-  } catch (e:any) {
+    return new Response(JSON.stringify({ session }), {
+      headers: { "Content-Type": "application/json" },
+    });
+
+  } catch (e: any) {
     return new Response(JSON.stringify({ error: String(e?.message || e) }), { status: 500 });
   }
 }
