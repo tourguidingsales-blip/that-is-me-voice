@@ -1,111 +1,96 @@
-import React, { useRef, useState } from 'react'
-import RealtimeVoiceCard from './components/RealtimeVoiceCard'
-import { connectRealtime, disconnectRealtime, RealtimeHandle } from './lib/realtimeClient'
-import { initTranscriber, stopTranscriber } from './lib/transcriber'
+// src/App.tsx
+import { useState } from "react";
+import { connectRealtime, cleanup } from "./lib/realtimeClient";
 
-type Turn = { role: 'user' | 'assistant'; content: string; start_ms?: number; end_ms?: number }
+type Handle = {
+  stop: () => void;
+  pc: RTCPeerConnection | null;
+  dc: RTCDataChannel | null;
+} | null;
 
 export default function App() {
-  const handleRef = useRef<RealtimeHandle | null>(null)
-  const [status, setStatus] = useState<'idle'|'connecting'|'connected'|'stopped'|'error'>('idle')
-  const [conversationId, setConversationId] = useState<string | null>(null)
-  const [messages, setMessages] = useState<Turn[]>([])
-  const [errorMsg, setErrorMsg] = useState<string | null>(null)
-
-  async function saveNow(partial: Turn[]) {
-    if (!conversationId || partial.length === 0) return
-    try {
-      await fetch('/api/saveTranscript', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ conversationId, messages: partial, end: false }),
-      })
-    } catch (e) {
-      console.warn('saveNow failed', e)
-    }
-  }
+  const [handle, setHandle] = useState<Handle>(null);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [isRunning, setIsRunning] = useState(false);
 
   async function startChat() {
-    setErrorMsg(null)
-    setStatus('connecting')
-
+    if (isConnecting || isRunning) return;
+    setIsConnecting(true);
     try {
-      // 1) startChat
-      const res = await fetch('/api/startChat', { method: 'POST' })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data?.error || 'startChat failed')
-      if (!data?.session?.client_secret?.value) throw new Error('Missing client_secret from server')
+      const r = await fetch("/api/startChat", { method: "POST" });
+      if (!r.ok) throw new Error("startChat failed");
+      const data = await r.json();
 
-      setConversationId(data?.conversationId || null)
+      const h = await connectRealtime({
+        clientSecret: data.client_secret?.value ?? data.client_secret,
+        instructions: data.instructions,            // מגיע מ-Supabase
+        voice: data.voice ?? "alloy",
+        onConnected: () => setIsRunning(true),
+        onDisconnected: () => setIsRunning(false),
+        onError: (e) => console.error(e),
+      });
 
-      // 2) connect realtime
-      handleRef.current = await connectRealtime({
-        clientSecret: data.session.client_secret.value,
-        onAssistantText: (chunk: string) => {
-          setMessages(prev => {
-            const next = [...prev]
-            const last = next[next.length - 1]
-            if (last?.role === 'assistant') last.content += chunk
-            else next.push({ role: 'assistant', content: chunk })
-            const lastTurn = next[next.length - 1]
-            saveNow([lastTurn])
-            return next
-          })
-        },
-        onConnected: () => setStatus('connected'),
-        onDisconnected: () => setStatus('stopped'),
-        onError: (e) => {
-          console.error('realtime error', e)
-          setErrorMsg(String(e?.message || e))
-          setStatus('error')
-        },
-      })
-
-      // 3) transcriber
-      initTranscriber({
-        onUserText: (text: string) => {
-          setMessages(prev => {
-            const turn = { role: 'user', content: text || '(לא נתפס דיבור)' } as Turn
-            saveNow([turn])
-            return [...prev, turn]
-          })
-        }
-      })
-    } catch (e: any) {
-      console.error('startChat/connect failed', e)
-      setErrorMsg(String(e?.message || e))
-      setStatus('error')
+      setHandle(h);
+    } catch (e) {
+      console.error(e);
+      alert("שגיאה בהתחלת השיחה");
+    } finally {
+      setIsConnecting(false);
     }
   }
 
-  async function stopChat() {
-    stopTranscriber()
-    await disconnectRealtime(handleRef.current)
-
-    if (conversationId && messages.length) {
-      try {
-        await fetch('/api/saveTranscript', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ conversationId, messages, end: true }),
-        })
-      } catch (e) {
-        console.warn('final save failed', e)
-      }
-    }
-    setStatus('stopped')
+  function stopChat() {
+    try { handle?.stop(); } catch {}
+    setHandle(null);
+    setIsRunning(false);
   }
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      <RealtimeVoiceCard onStart={startChat} onStop={stopChat} status={status} />
-      {errorMsg && (
-        <div dir="rtl" className="mx-auto max-w-xl mt-4 px-4">
-          <div className="rounded-lg border border-red-200 bg-red-50 text-red-800 p-3 text-sm">
-            שגיאת התחברות: {errorMsg}
-          </div>
+    <div dir="rtl" className="min-h-screen w-full flex items-center justify-center bg-gray-50">
+      <div className="w-full max-w-2xl rounded-3xl bg-white shadow p-8">
+        <h1 className="text-3xl md:text-4xl font-bold text-center mb-6">
+          טיוטת צ'טבוט התחקיר
+        </h1>
+
+        <p className="text-center text-gray-600 mb-8">
+          לחץ על "התחלת שיחה" כדי להתחיל בשיחה קולית. השיחה תתחיל מיד לאחר אישור שימוש במיקרופון.
+        </p>
+
+        {/* שורת הכפתורים – התחלה בימין, סיום בשמאל */}
+        <div className="flex flex-row-reverse items-center justify-between gap-4">
+          <button
+            onClick={startChat}
+            disabled={isConnecting || isRunning}
+            className={`inline-flex items-center justify-center px-6 py-3 rounded-xl text-white 
+              ${isRunning ? "bg-blue-400 cursor-not-allowed" : "bg-blue-600 hover:bg-blue-700"}
+              transition`}
+            aria-label="התחלת שיחה"
+          >
+            התחלת שיחה
+            <span className="ml-2">🎙️</span>
+          </button>
+
+          <button
+            onClick={stopChat}
+            disabled={!isRunning}
+            className={`inline-flex items-center justify-center px-6 py-3 rounded-xl text-white 
+              ${!isRunning ? "bg-red-300 cursor-not-allowed" : "bg-red-600 hover:bg-red-700"}
+              transition`}
+            aria-label="סיום שיחה"
+          >
+            סיום שיחה
+          </button>
         </div>
-      )}
+
+        {/* אינדיקציה מצב */}
+        <div className="mt-6 text-center text-sm text-gray-500">
+          {isConnecting
+            ? "מתחבר…"
+            : isRunning
+              ? "שיחה פעילה"
+              : "מוכן להתחלת שיחה"}
+        </div>
+      </div>
     </div>
-  )
+  );
 }
