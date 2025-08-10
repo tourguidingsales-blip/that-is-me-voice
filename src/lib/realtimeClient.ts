@@ -1,156 +1,151 @@
 // src/lib/realtimeClient.ts
-// חיבור WebRTC למודל Realtime של OpenAI (Edge) + כפיית קול ומשפט פתיחה מדויק.
 
-export type RealtimeHandle = {
-  pc: RTCPeerConnection;
-  dc?: RTCDataChannel;
-  close: () => Promise<void>;
-};
+export type ConnectOpts = {
+  /** ה-JWT האפמרלי שהשרת מחזיר מ-/api/startChat */
+  clientSecret: string;
+  /** ההנחיות המלאות שמגיעות מהשרת (Supabase) */
+  instructions: string;
+  /** קול רלוונטי (ברירת מחדל alloy) */
+  voice?: string;
 
-type ConnectOpts = {
-  clientSecret: string; // ephemeral key שמתקבל מ- /api/startChat
-  onAssistantText?: (chunk: string) => void;
+  /** Callbacks אופציונליים */
   onConnected?: () => void;
   onDisconnected?: () => void;
-  onError?: (e: any) => void;
+  onError?: (e: unknown) => void;
 };
 
+export type RealtimeHandle = {
+  stop: () => void;
+  pc: RTCPeerConnection | null;
+  dc: RTCDataChannel | null;
+};
+
+let pcGlobal: RTCPeerConnection | null = null;
+let dcGlobal: RTCDataChannel | null = null;
+let micStreamGlobal: MediaStream | null = null;
+
+/**
+ * יוצר חיבור WebRTC ל-OpenAI Realtime ושולח את ה-instructions מהשרת.
+ * לא שולח שום טקסט פתיח קשיח מהקוד.
+ */
 export async function connectRealtime(opts: ConnectOpts): Promise<RealtimeHandle> {
-  if (!opts.clientSecret) {
-    throw new Error("Missing clientSecret (ephemeral key) from /api/startChat");
+  const model = 'gpt-4o-realtime-preview-2024-12-17';
+  const voice = opts.voice ?? 'alloy';
+
+  // מנקה חיבור קודם אם נשאר
+  try { cleanup(); } catch {}
+
+  // 1) מכין אלמנט אודיו ל-remote (ללא playsInline ב-TS)
+  let remoteAudioEl = document.getElementById('remote-audio') as HTMLAudioElement | null;
+  if (!remoteAudioEl) {
+    remoteAudioEl = document.createElement('audio');
+    remoteAudioEl.id = 'remote-audio';
+    remoteAudioEl.autoplay = true;
+    remoteAudioEl.setAttribute('playsinline', 'true');
+    remoteAudioEl.style.display = 'none';
+    document.body.appendChild(remoteAudioEl);
   }
 
-  // PeerConnection
+  // 2) מבקש מיקרופון
+  micStreamGlobal = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+  // 3) PeerConnection
   const pc = new RTCPeerConnection();
+  pcGlobal = pc;
 
-  // אודיו נכנס
-  const audioEl = document.createElement("audio");
-  audioEl.autoplay = true;
-  pc.ontrack = (e) => {
-    audioEl.srcObject = e.streams[0];
-  };
+  // הזרמת המיקרופון
+  micStreamGlobal.getTracks().forEach((t) => pc.addTrack(t, micStreamGlobal!));
 
-  // DataChannel לאירועי המודל
-  const dc = pc.createDataChannel("oai-events");
+  // קבלת האודיו מהמודל
+  pc.addEventListener('track', (ev) => {
+    const [remoteStream] = ev.streams;
+    if (remoteAudioEl) remoteAudioEl.srcObject = remoteStream;
+  });
 
-  dc.onopen = () => {
-    // ננעל קול נשי איכותי (alloy) גם בצד הלקוח
+  // 4) DataChannel לאירועים
+  const dc = pc.createDataChannel('oai-events');
+  dcGlobal = dc;
+
+  // 5) Offer/Answer
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+
+  const sdpResp = await fetch(`https://api.openai.com/v1/realtime?model=${encodeURIComponent(model)}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${opts.clientSecret}`,
+      'Content-Type': 'application/sdp',
+    },
+    body: offer.sdp ?? '',
+  });
+
+  const answerSdp = await sdpResp.text();
+  await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+
+  // 6) כאשר ה-DataChannel נפתח – מזריקים את ההנחיות מה-DB ומפעילים תגובה ראשונה
+  dc.addEventListener('open', () => {
     try {
+      // session.update עם ה-instructions מהשרת (Supabase) + voice
       dc.send(
         JSON.stringify({
-          type: "session.update",
-          session: { voice: "alloy" },
-        })
-      );
-    } catch {}
-
-    // נכריח את משפט הפתיחה המדויק – ייאמר מיד כשנפתחת השיחה
-    try {
-      dc.send(
-        JSON.stringify({
-          type: "response.create",
-          response: {
-            instructions:
-              'אמרי בדיוק, מילה במילה, ללא תוספות לפני/אחרי: "היי, בוקר טוב, ברוכים הבאים לתחקיר לקראת הראיון המצולם! איך יהיה נוח שאפנה במהלך השיחה – בלשון זכר, נקבה, או אחרת? ומה השם בבקשה?"',
+          type: 'session.update',
+          session: {
+            instructions: opts.instructions,
+            voice,
+            // מומלץ להשאיר VAD בצד השרת כברירת מחדל
+            // turn_detection: { type: 'server_vad' } <-- אם תרצה לעדכן אחרי ההקמה
           },
         })
       );
-    } catch {}
 
-    opts.onConnected?.();
-  };
+      // טריגר לפתיחת השיחה — ללא טקסט קשיח מהקוד
+      dc.send(
+        JSON.stringify({
+          type: 'response.create',
+          response: {},
+        })
+      );
 
-  dc.onclose = () => opts.onDisconnected?.();
-  dc.onerror = (e) => opts.onError?.(e);
-
-  // פיענוח טקסטים מהמודל (מגיב גם לדלתות וגם לפלט מלא)
-  dc.onmessage = (evt) => {
-    try {
-      const msg = JSON.parse(evt.data);
-
-      // דלתות טקסט
-      if (msg?.type === "response.output_text.delta" && typeof msg.delta === "string") {
-        opts.onAssistantText?.(msg.delta);
-        return;
-      }
-      // פלט טקסט מלא
-      if (msg?.type === "response.output_text" && typeof msg.text === "string") {
-        opts.onAssistantText?.(msg.text);
-        return;
-      }
-      // חלק מהמימושים שולחים אירוע כללי עם 'delta'
-      if (typeof msg?.delta === "string") {
-        opts.onAssistantText?.(msg.delta);
-        return;
-      }
-    } catch {
-      // הודעות לא-JSON – מתעלמים
+      opts.onConnected?.();
+    } catch (e) {
+      opts.onError?.(e);
     }
-  };
+  });
 
-  // הוספת מיקרופון
-  let stream: MediaStream | null = null;
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-      },
-    });
-    for (const track of stream.getTracks()) pc.addTrack(track, stream);
-  } catch (e) {
-    opts.onError?.(new Error("Microphone permission denied or unavailable"));
-    throw e;
-  }
-
-  // יצירת Offer ושליחתו ל-OpenAI לקבלת Answer
-  const offer = await pc.createOffer({ offerToReceiveAudio: true });
-  await pc.setLocalDescription(offer);
-
-  const sdpRes = await fetch(
-    "https://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview",
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${opts.clientSecret}`,
-        "Content-Type": "application/sdp",
-      },
-      body: offer.sdp as string,
+  // אירועי סיום/שגיאה
+  pc.addEventListener('iceconnectionstatechange', () => {
+    if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
+      cleanup();
+      opts.onDisconnected?.();
     }
-  );
-
-  if (!sdpRes.ok) {
-    const t = await sdpRes.text();
-    const err = new Error(`SDP exchange failed (${sdpRes.status}): ${t.slice(0, 300)}`);
-    opts.onError?.(err);
-    throw err;
-  }
-
-  const answer: RTCSessionDescriptionInit = {
-    type: "answer",
-    sdp: await sdpRes.text(),
-  };
-  await pc.setRemoteDescription(answer);
+  });
 
   return {
+    stop: cleanup,
     pc,
     dc,
-    close: async () => {
-      try {
-        dc?.close();
-      } catch {}
-      try {
-        pc.close();
-      } catch {}
-      try {
-        (stream?.getTracks() || []).forEach((t) => t.stop());
-      } catch {}
-    },
   };
 }
 
-export async function disconnectRealtime(handle?: RealtimeHandle | null) {
-  if (!handle) return;
-  await handle.close();
+/** סוגר ערוצים, עוצר טראקים ומנקה זיכרון */
+export function cleanup(): void {
+  try {
+    dcGlobal?.close();
+  } catch {}
+  dcGlobal = null;
+
+  try {
+    pcGlobal?.getSenders().forEach((s) => s.track && s.track.stop());
+    pcGlobal?.getReceivers().forEach((r) => r.track && r.track.stop());
+    pcGlobal?.close();
+  } catch {}
+  pcGlobal = null;
+
+  try {
+    micStreamGlobal?.getTracks().forEach((t) => t.stop());
+  } catch {}
+  micStreamGlobal = null;
+
+  const el = document.getElementById('remote-audio') as HTMLAudioElement | null;
+  if (el) el.srcObject = null;
 }
