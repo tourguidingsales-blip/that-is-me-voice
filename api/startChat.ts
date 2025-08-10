@@ -1,131 +1,72 @@
-// api/startChat.ts — Edge Runtime (Vercel)
-// 1) מנסה להביא את הפרומפט מה-Dashboard לפי PROMPT_ID (לא מובטח בכל החשבונות).
-// 2) אם נכשל—נופל ל-PROMPT_TEXT מה-ENV.
-// 3) יוצר סשן Realtime עם instructions כמחרוזת.
-// 4) תמיד מחזיר JSON (גם בשגיאה) כדי שה-frontend לא יקרוס.
+// /api/startChat.ts
+import type { VercelRequest, VercelResponse } from '@vercel/node';
 
-export const config = { runtime: "edge" };
-
-type AnyJson = Record<string, any>;
-
-function extractPromptText(obj: AnyJson | null): string | null {
-  if (!obj) return null;
-  // ניסיונות לחלץ טקסט מתוך צורות נפוצות:
-  if (typeof obj.instructions === "string") return obj.instructions;
-  if (typeof obj.text === "string") return obj.text;
-  if (typeof obj.content === "string") return obj.content;
-  if (obj.prompt && typeof obj.prompt.instructions === "string") return obj.prompt.instructions;
-  if (Array.isArray(obj.data) && obj.data[0]) {
-    const d = obj.data[0];
-    if (typeof d.instructions === "string") return d.instructions;
-    if (typeof d.text === "string") return d.text;
-    if (typeof d.content === "string") return d.content;
-  }
-  return null;
-}
-
-async function fetchPromptFromDashboard(apiKey: string, promptId: string): Promise<string | null> {
-  // לא מובטח רשמית, אבל ננסה:
-  const url = `https://api.openai.com/v1/prompts/${encodeURIComponent(promptId)}`;
+export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
-    const r = await fetch(url, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-    });
+    if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
 
-    const raw = await r.text();
-    let json: AnyJson | null = null;
-    try { json = JSON.parse(raw); } catch { /* לא JSON */ }
+    const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+    const SUPABASE_URL = process.env.SUPABASE_URL;
+    const SUPABASE_SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE; // שרת בלבד
 
-    if (!r.ok) {
-      // נחשוף את מה שקיבלנו כדי להבין מה קרה (יחזור ללקוח כ-json)
-      throw new Error(`Failed to fetch prompt: ${r.status} ${r.statusText} — ${raw.slice(0, 400)}`);
+    if (!OPENAI_API_KEY || !SUPABASE_URL || !SUPABASE_SERVICE_ROLE) {
+      return res.status(500).json({ error: 'Missing required server env vars' });
     }
 
-    const text = extractPromptText(json);
-    return text;
-  } catch (e) {
-    // אם נכשל—נחזיר null כדי שניפול ל-PROMPT_TEXT
-    return null;
-  }
-}
-
-export default async function handler(req: Request) {
-  if (req.method !== "POST") {
-    return new Response(JSON.stringify({ error: "Method not allowed" }), {
-      status: 405, headers: { "Content-Type": "application/json" },
-    });
-  }
-
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    return new Response(JSON.stringify({ error: "Missing OPENAI_API_KEY" }), {
-      status: 500, headers: { "Content-Type": "application/json" },
-    });
-  }
-
-  const PROMPT_ID = process.env.PROMPT_ID || ""; // למשל pmpt_...
-  const PROMPT_TEXT_FALLBACK = process.env.PROMPT_TEXT || ""; // אופציונלי, לגיבוי
-
-  try {
-    // 1) ננסה להביא מה-Dashboard
-    let finalInstructions: string | null = null;
-    if (PROMPT_ID) {
-      finalInstructions = await fetchPromptFromDashboard(apiKey, PROMPT_ID);
-    }
-
-    // 2) Fallback ל-PROMPT_TEXT אם צריך
-    if (!finalInstructions) {
-      if (PROMPT_TEXT_FALLBACK) {
-        finalInstructions = PROMPT_TEXT_FALLBACK;
-      } else {
-        return new Response(JSON.stringify({
-          error: "Unable to load prompt from Dashboard and no PROMPT_TEXT fallback provided.",
-          hint: "Add PROMPT_TEXT in Vercel or ensure PROMPT_ID is accessible.",
-        }), { status: 500, headers: { "Content-Type": "application/json" } });
+    // 1) שליפת ההנחיות מה-DB (prompt הפעיל)
+    const promptResp = await fetch(
+      `${SUPABASE_URL}/rest/v1/prompts?is_active=eq.true&select=instructions`,
+      {
+        headers: {
+          apikey: SUPABASE_SERVICE_ROLE,
+          Authorization: `Bearer ${SUPABASE_SERVICE_ROLE}`,
+          Accept: 'application/json',
+        },
       }
+    );
+
+    if (!promptResp.ok) {
+      const raw = await promptResp.text();
+      return res.status(500).json({ error: 'Failed to load prompt from DB', raw });
     }
 
-    // 3) יצירת סשן Realtime עם instructions כמחרוזת
-    const rt = await fetch("https://api.openai.com/v1/realtime/sessions", {
-      method: "POST",
+    const rows = (await promptResp.json()) as Array<{ instructions: string }>;
+    const instructions = rows?.[0]?.instructions?.trim();
+    if (!instructions) {
+      return res.status(400).json({ error: 'No active prompt found in DB' });
+    }
+
+    // 2) יצירת session אפמרלי ל-Realtime
+    const rt = await fetch('https://api.openai.com/v1/realtime/sessions', {
+      method: 'POST',
       headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: "gpt-4o-realtime-preview",
-        modalities: ["audio", "text"],
-        voice: "alloy",
-        turn_detection: { type: "server_vad" }, // או semantic_vad / להשמיט
-        instructions: finalInstructions,         // ← מחרוזת בלבד
+        model: 'gpt-4o-realtime-preview-2024-12-17',
+        voice: 'alloy',
+        turn_detection: { type: 'server_vad' },
       }),
     });
 
-    const text = await rt.text();
-    let json: AnyJson | null = null;
-    try { json = JSON.parse(text); } catch { /* לא JSON */ }
-
+    const rtJson = await rt.json();
     if (!rt.ok) {
-      return new Response(JSON.stringify({
-        error: "OpenAI Realtime session creation failed",
-        status: rt.status,
-        details: json ?? text,
-      }), { status: rt.status, headers: { "Content-Type": "application/json" } });
+      return res.status(rt.status).json({ error: 'OpenAI session error', details: rtJson });
     }
 
-    return new Response(JSON.stringify({
-      session: json,
-      source: (finalInstructions === PROMPT_TEXT_FALLBACK) ? "env_fallback" : "dashboard",
-    }), { headers: { "Content-Type": "application/json" } });
+    const { client_secret } = rtJson;
+    if (!client_secret) {
+      return res.status(500).json({ error: 'No client_secret returned from OpenAI' });
+    }
 
-  } catch (err) {
-    return new Response(JSON.stringify({
-      error: "Internal server error",
-      details: String(err),
-    }), { status: 500, headers: { "Content-Type": "application/json" } });
+    // 3) מחזירים ללקוח גם את ההנחיות וגם את הקול
+    return res.status(200).json({
+      client_secret,
+      instructions,
+      voice: 'alloy',
+    });
+  } catch (e: any) {
+    return res.status(500).json({ error: 'Unhandled server error', details: e?.message ?? String(e) });
   }
 }
