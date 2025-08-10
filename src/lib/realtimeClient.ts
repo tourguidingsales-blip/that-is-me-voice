@@ -1,6 +1,6 @@
 // src/lib/realtimeClient.ts
-// WebRTC <> OpenAI Realtime
-// ⚠️ אין instructions בצד הלקוח. הדשבורד (Prompt ID) הוא מקור האמת.
+// WebRTC ↔ OpenAI Realtime
+// ⚠️ אין instructions בצד הלקוח. ה-Prompt מגיע מהדשבורד (prompt_id בסשן).
 // שולחים טריגר יחיד של response.create כדי שהמודל יפתח לפי הפרומפט בדשבורד.
 
 export type RealtimeHandle = {
@@ -11,17 +11,17 @@ export type RealtimeHandle = {
 };
 
 export type ConnectOpts = {
-  clientSecret: string;                       // ephemeral key מ- /api/startChat
-  onAssistantText?: (chunk: string) => void;  // דלתות/טקסט מלא מהמודל
+  clientSecret: string;                       // ephemeral key שהשרת מחזיר מ-/api/startChat
+  onAssistantText?: (chunk: string) => void;  // טקסט/דלתות מהמודל (לכתוביות)
   onConnected?: () => void;
   onDisconnected?: () => void;
   onError?: (e: unknown) => void;
 };
 
 export async function connectRealtime(opts: ConnectOpts): Promise<RealtimeHandle> {
-  if (!opts.clientSecret) throw new Error("Missing clientSecret (ephemeral key)");
+  if (!opts.clientSecret) throw new Error("Missing clientSecret (ephemeral)");
 
-  // 1) PeerConnection + אלמנט אודיו לפלט
+  // 1) PeerConnection + פלט אודיו
   const pc = new RTCPeerConnection();
   const audioEl = document.createElement("audio");
   audioEl.autoplay = true;
@@ -32,31 +32,29 @@ export async function connectRealtime(opts: ConnectOpts): Promise<RealtimeHandle
   // 2) DataChannel לאירועי המודל
   const dc = pc.createDataChannel("oai-events");
 
-  // לוודא שנטרגר פעם אחת בלבד
+  // דואגים לשלוח טריגר פעם אחת בלבד
   let triggered = false;
 
   dc.onopen = () => {
     try {
-      // קיבוע קול ברמת הסשן (גיבוי לשרת)
+      // נועל קול "alloy" ברמת הסשן (גיבוי)
       dc.send(JSON.stringify({ type: "session.update", session: { voice: "alloy" } }));
 
-      // טריגר תגובה יחיד — בלי instructions.
+      // טריגר יחיד כדי שהמודל יפתח לפי ה-Prompt בדשבורד
       const trigger = () => {
         if (triggered) return;
         triggered = true;
-        dc.send(
-          JSON.stringify({
-            type: "response.create",
-            response: {
-              conversation: "none",
-              modalities: ["audio", "text"], // שישמיע בקול וגם נחטוף טקסט
-              tts: { voice: "alloy" },       // לוודא קול נשי
-            },
-          })
-        );
+        dc.send(JSON.stringify({
+          type: "response.create",
+          response: {
+            conversation: "none",
+            modalities: ["audio", "text"], // נשמע קול וגם נקבל טקסט
+            tts: { voice: "alloy" },
+          }
+        }));
       };
 
-      // השהיה קצרה כדי לוודא שהסשן מוכן לפני הטריגר
+      // השהיה קצרה כדי לוודא שה-session מוכן לפני הטריגר
       setTimeout(trigger, 80);
     } catch (err) {
       opts.onError?.(err);
@@ -68,7 +66,7 @@ export async function connectRealtime(opts: ConnectOpts): Promise<RealtimeHandle
   dc.onclose = () => opts.onDisconnected?.();
   dc.onerror = (e: Event) => opts.onError?.(e);
 
-  // דלתות/טקסט מלא מהמודל (אם תרצה להציג כתוביות)
+  // פענוח טקסטים/דלתות מהמודל (לכתוביות)
   dc.onmessage = (evt: MessageEvent) => {
     try {
       const msg = JSON.parse(String(evt.data));
@@ -80,7 +78,7 @@ export async function connectRealtime(opts: ConnectOpts): Promise<RealtimeHandle
         opts.onAssistantText?.(msg.delta);
       }
     } catch {
-      // ייתכנו פריימים לא-JSON — מתעלמים
+      // פריימים שאינם JSON — מתעלמים
     }
   };
 
@@ -118,7 +116,7 @@ export async function connectRealtime(opts: ConnectOpts): Promise<RealtimeHandle
 
   if (!sdpRes.ok) {
     const t = await sdpRes.text();
-    const err = new Error(`SDP exchange failed (${sdpRes.status}): ${t.slice(0, 300)}`);
+    const err = new Error(`SDP exchange failed (${sdpRes.status}): ${t.slice(0, 400)}`);
     opts.onError?.(err);
     throw err;
   }
@@ -126,6 +124,7 @@ export async function connectRealtime(opts: ConnectOpts): Promise<RealtimeHandle
   const answer: RTCSessionDescriptionInit = { type: "answer", sdp: await sdpRes.text() };
   await pc.setRemoteDescription(answer);
 
+  // 5) מחזירים Handle עם סגירה נקייה
   return {
     pc,
     dc,
