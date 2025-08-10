@@ -1,39 +1,35 @@
 // src/App.tsx
-import { useState } from "react";
-import { connectRealtime, cleanup } from "./lib/realtimeClient";
-
-type Handle = {
-  stop: () => void;
-  pc: RTCPeerConnection | null;
-  dc: RTCDataChannel | null;
-} | null;
+import { useState } from 'react';
+import { connectRealtime, cleanup, type RealtimeHandle } from './lib/realtimeClient';
 
 export default function App() {
-  const [handle, setHandle] = useState<Handle>(null);
+  const [handle, setHandle] = useState<RealtimeHandle | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
 
   async function startChat() {
     if (isConnecting || isRunning) return;
     setIsConnecting(true);
+
     try {
-      const r = await fetch("/api/startChat", { method: "POST" });
-      if (!r.ok) throw new Error("startChat failed");
+      // מבקש מהשרת סשן + הנחיות (מ-Supabase)
+      const r = await fetch('/api/startChat', { method: 'POST' });
+      if (!r.ok) throw new Error('startChat failed');
       const data = await r.json();
 
       const h = await connectRealtime({
         clientSecret: data.client_secret?.value ?? data.client_secret,
-        instructions: data.instructions,            // מגיע מ-Supabase
-        voice: data.voice ?? "alloy",
+        instructions: data.instructions, // כל הטקסט מה-DB
+        voice: data.voice ?? 'alloy',
         onConnected: () => setIsRunning(true),
         onDisconnected: () => setIsRunning(false),
         onError: (e) => console.error(e),
       });
 
       setHandle(h);
-    } catch (e) {
-      console.error(e);
-      alert("שגיאה בהתחלת השיחה");
+    } catch (err) {
+      console.error(err);
+      alert('שגיאה בהתחלת השיחה');
     } finally {
       setIsConnecting(false);
     }
@@ -56,14 +52,13 @@ export default function App() {
           לחץ על "התחלת שיחה" כדי להתחיל בשיחה קולית. השיחה תתחיל מיד לאחר אישור שימוש במיקרופון.
         </p>
 
-        {/* שורת הכפתורים – התחלה בימין, סיום בשמאל */}
+        {/* כפתורים: התחלה בימין (כחול), סיום בשמאל (אדום) */}
         <div className="flex flex-row-reverse items-center justify-between gap-4">
           <button
             onClick={startChat}
             disabled={isConnecting || isRunning}
-            className={`inline-flex items-center justify-center px-6 py-3 rounded-xl text-white 
-              ${isRunning ? "bg-blue-400 cursor-not-allowed" : "bg-blue-600 hover:bg-blue-700"}
-              transition`}
+            className={`inline-flex items-center justify-center px-6 py-3 rounded-xl text-white transition
+              ${isRunning ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}
             aria-label="התחלת שיחה"
           >
             התחלת שיחה
@@ -73,22 +68,16 @@ export default function App() {
           <button
             onClick={stopChat}
             disabled={!isRunning}
-            className={`inline-flex items-center justify-center px-6 py-3 rounded-xl text-white 
-              ${!isRunning ? "bg-red-300 cursor-not-allowed" : "bg-red-600 hover:bg-red-700"}
-              transition`}
+            className={`inline-flex items-center justify-center px-6 py-3 rounded-xl text-white transition
+              ${!isRunning ? 'bg-red-300 cursor-not-allowed' : 'bg-red-600 hover:bg-red-700'}`}
             aria-label="סיום שיחה"
           >
             סיום שיחה
           </button>
         </div>
 
-        {/* אינדיקציה מצב */}
         <div className="mt-6 text-center text-sm text-gray-500">
-          {isConnecting
-            ? "מתחבר…"
-            : isRunning
-              ? "שיחה פעילה"
-              : "מוכן להתחלת שיחה"}
+          {isConnecting ? 'מתחבר…' : isRunning ? 'שיחה פעילה' : 'מוכן להתחלת שיחה'}
         </div>
       </div>
     </div>
