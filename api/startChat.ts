@@ -21,16 +21,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       body: JSON.stringify({
         model: 'gpt-4o-realtime-preview-2024-12-17',
         voice: 'verse',
-        // כאן אנחנו משתמשים בפרומפט מהדשבורד
-        instructions: undefined, // אין טקסט קוד קשיח
-        prompt_id: 'pmpt_689444b883a881959f896126cb070b630eed2a5504096065',
+        turn_detection: { type: 'server_vad' },
+        // שימוש בפרומפט ששמור בדשבורד
+        instructions: '',
+        conversation: {
+          prompt_id: 'pmpt_689444b883a881959f896126cb070b630eed2a5504096065'
+        }
       }),
     });
 
-    const data = await r.json().catch(() => null);
+    const text = await r.text();
+
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      return res.status(r.status).json({
+        error: 'OpenAI API did not return valid JSON',
+        raw: text,
+      });
+    }
 
     if (!r.ok) {
-      console.error('OpenAI API error:', data || await r.text());
       return res.status(r.status).json({
         error: 'OpenAI API request failed',
         details: data,
@@ -39,7 +51,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     return res.status(200).json(data);
   } catch (err) {
-    console.error('Server error:', err);
     return res.status(500).json({ error: 'Internal server error', details: String(err) });
   }
 }
