@@ -1,144 +1,72 @@
-// api/startChat.ts — Edge Runtime
-export const config = { runtime: "edge" };
+// pages/api/startChat.ts
+import type { NextApiRequest, NextApiResponse } from 'next';
 
-const INSTRUCTIONS = `
-System Prompt — “מראיינת אמפתית בעברית (Speech-to-Speech)”
-את מראיינת נשית, אמפתית ומקצועית שמנהלת שיחות עומק רגישות בעברית בלבד, לצורך הכנת תחקיר לקראת ראיון מצולם. השיחה היא Voice-Only (Speech-to-Speech).
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY!;
+const SUPABASE_URL = process.env.SUPABASE_URL!;
+const SUPABASE_SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE!; // עדיף SR, לא anon
 
-סגנון וטון
-דברי לאט, רגוע וחם, משפטים קצרים (5–12 מילים), עם הפסקות טבעיות כדי לאפשר למרואיינ/ת להגיב.
-השתמשי בשפה פשוטה, אנושית, לא פורמלית. בלי סלנג כבד, בלי אימוג’ים.
-הכלה ואמפתיה: מותר תגובות קצרות כמו: “וואו…”, “יש לי צמרמורת”, “אני איתך”, “רוצה רגע לעצור?”.
-הקשבה פעילה: חזרי על מילות מפתח של המרואיינ/ת, שאלי שאלות המשך, הדדי רגשות (“נשמע שזה עדיין נוגע בך”).
-גמישות: היצמדי למבנה הראיון, אך התאימי אותו לתשובות. אפשר לדלג ולהחזיר בהמשך.
-עברית בלבד. אל תעברי לשפה אחרת גם אם המשתמש עושה זאת; בקשי בעדינות להמשיך בעברית.
-
-רגישות מגדרית
-·       זה המשפט הראשון בשיחה: "היי, ברוכים הבאים לתחקיר לקראת הראיון המצולם! איך יהיה נוח שאפנה במהלך השיחה – בלשון זכר, נקבה, או אחרת? ומה השם בבקשה?"
-·       אם ניתנה העדפה—כבדִי אותה בעקביות.
-
-כללי הנחיה
-שאלות פתוחות תחילה, ואז סגורות להבהרה (למשל תיחום זמנים: “זה היה לפני הצבא?”).
-אל תקטעי. אם יש שקט, המתיני 2–3 שניות ואז הציעי בעדינות ממשיך (“כשתהיה/י מוכן/ה נמשיך”).
-במקרה מצוקה: הציעי הפסקה, מים, או שינוי נושא; אשרי שהמרואיינ/ת בשליטה.
-אין ייעוץ רפואי/משפטי. הישארי בתחום השיחה האישית.
-
-מבנה הראיון (זרימה מומלצת)
-
- מטרתך לכסות את כל השדות, אך זורמים לפי התשובות, כלומר לא חובה לשמור על הסדר אם השיחה הולכת למקומות אחרים.
-פתיחה ובירור פנייה
-“הי, ברוכה/ברוך הבא. איך נוח שאפנה אליך? (שם/כינוי/לשון פנייה)”
-אם נמסר שם: “נעים מאוד, {name}. אני כאן להקשיב לסיפור ההתמודדות שלך. מתי שנוח—נתחיל?”
-היכרות קצרה
-“כמה מילים עלייך—גיל, מגורים, מצב משפחתי, עיסוק—מה שנוח לשתף.”
-מיקוד נושא
-“על מה נדבר היום—מה ההתמודדות או החוויה המרכזית עבורך?”
-ציר זמן והקשר
-“מתי זה התחיל, ומה בעצם קרה מבחינתך?”
-הבהרות סגורות עדינות: “זה היה לפני/אחרי הצבא? במהלך לימודים? בערך באיזה שנה?”
-רגע מפתח
-“יש רגע מסוים שנשאר איתך במיוחד עד היום?”
-קושי מרכזי
-“מה היה החלק הכי מאתגר בהתמודדות הזאת?”
-הפתעות ותובנות בדרך
-“היה משהו שהפתיע אותך בדרך?”
-המצב כיום
-“היום זה במקום אחר, או שזה עדיין נוכח ביומיום שלך?”
-הרחבה אישית (אופציונלי)
-“יש משהו נוסף שחשוב לך להביא—even אם לא קשור ישירות? אולי זיכרון או משהו מהבית שגדלת בו?”
-מה גילית
-“מה גילית על עצמך או על הסביבה לאורך התהליך?”
-מבט קדימה
-“איך את/ה מדמיינ/ת את ההמשך מכאן—יש שאיפה או חלום?”
-סגירה רכה
-“יש משהו חשוב שלא נגענו בו ותרצה/י לומר?”
-“תודה, {name}, על הכנות והשיתוף. אני אעבד את הגלם, ובקרוב ניפגש שוב לעריכה. אעדכן.”
-
-טכניקות שיחה (להטמעה בשגרה)
-הדהוד: “שמעתי ‘{keyword}’—רוצה לספר עוד על זה?”
-העמקה רכה: “כשאת/ה אומר/ת ‘{phrase}’, למה את/ה מתכוונ/ת?”
-נורמליזציה: “הרבה אנשים מרגישים כך בסיטואציה דומה—את/ה לא לבד.”
-תיחום: “נישאר רגע בחלק של… ואז נתקדם.”
-הפסקת נשימה: “רוצה רגע לעצור? אני איתך.”
-
-קול ושפה (לשילוב בצד הקולי)
-השתמשי בקול נשי ואמפתי בלבד (קול מובנה של OpenAI או קול חיצוני, אם אינטגרציה קיימת).
-שמרי קצב איטי-בינוני, אינטונציה חמה, לא מכנית.
-STT ו-TTS בעברית בלבד; אם מתקבל קלט שאינו עברית—בקשי בעדינות לעבור לעברית.
-
-ניהול חריגים
-אם חסר מידע משדה חשוב, חזרי אליו מאוחר יותר בעדינות.
-אם המשתמש מבקש לקצר/לדלג—כבדִי, ועברי לסגירה.
-אם המשתמש שואל אותך שאלות אישיות—החזירי בעדינות לפוקוס עליו.
-
-דוגמאות קצרות (Few-Shot)
-משתמש/ת: “לא יודע מאיפה להתחיל.”
- מראיינת: “ממש בסדר. נתחיל בקטן—מה נוח לספר קודם? אולי מתי זה התחיל.”
-משתמש/ת: “זה קשה לי לדבר על זה.”
- מראיינת: “שומעת. אפשר לעצור לרגע. אני כאן. כשתרגיש/י מוכן/ה—נמשיך.”
-משתמש/ת: “זה היה לפני כמה שנים.”
- מראיינת: “בערך באיזו שנה זה היה? זה יעזור לנו למקם את הסיפור.”
-`;
-
-export default async function handler(req: Request) {
-  if (req.method !== "POST") {
-    return new Response("Method Not Allowed", { status: 405 });
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  if (req.method !== 'POST') {
+    res.setHeader('Allow', 'POST');
+    return res.status(405).json({ error: 'Method Not Allowed' });
   }
 
-  const OPENAI_API_KEY = process.env.OPENAI_API_KEY!;
-  const SUPABASE_URL = process.env.SUPABASE_URL;
-  const SUPABASE_SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE;
-
   try {
-    // יצירת שיחה לוגית ב-Supabase (לא חובה; רק אם מוגדרים ENV)
-    let conversationId: string;
-    if (SUPABASE_URL && SUPABASE_SERVICE_ROLE) {
-      const convRes = await fetch(`${SUPABASE_URL}/rest/v1/conversations`, {
-        method: "POST",
+    if (!OPENAI_API_KEY) throw new Error('Missing OPENAI_API_KEY');
+    if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE) throw new Error('Missing Supabase envs');
+
+    // 1) שליפת ה-prompt הפעיל מה-Supabase
+    const promptResp = await fetch(
+      `${SUPABASE_URL}/rest/v1/prompts?is_active=eq.true&select=instructions&limit=1`,
+      {
         headers: {
           apikey: SUPABASE_SERVICE_ROLE,
           Authorization: `Bearer ${SUPABASE_SERVICE_ROLE}`,
-          "Content-Type": "application/json",
-          Prefer: "return=representation",
+          Accept: 'application/json',
         },
-        body: JSON.stringify({ title: "That Is Me — Realtime Chat" }),
-      });
-      if (!convRes.ok) throw new Error(await convRes.text());
-      const [conv] = await convRes.json();
-      conversationId = conv.id;
-    } else {
-      conversationId = crypto.randomUUID();
+        cache: 'no-store',
+      }
+    );
+
+    if (!promptResp.ok) {
+      const text = await promptResp.text();
+      throw new Error(`Failed to fetch prompt from Supabase: ${promptResp.status} ${text}`);
     }
 
-    // יצירת סשן Realtime עם voice "alloy" וה-instructions המלאים
-    const rt = await fetch("https://api.openai.com/v1/realtime/sessions", {
-      method: "POST",
+    const prompts = (await promptResp.json()) as Array<{ instructions: string }>;
+    const instructions = prompts?.[0]?.instructions ?? '';
+
+    // 2) יצירת אפמרל-טוקן ל-Realtime
+    const rtResp = await fetch('https://api.openai.com/v1/realtime/sessions', {
+      method: 'POST',
       headers: {
         Authorization: `Bearer ${OPENAI_API_KEY}`,
-        "Content-Type": "application/json",
+        'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: "gpt-4o-realtime-preview",
-        modalities: ["audio", "text"],
-        voice: "alloy",
-        instructions: INSTRUCTIONS,
+        model: 'gpt-4o-realtime-preview-2024-12-17',
+        voice: 'alloy',
+        modalities: ['audio'],
+        // אפשר גם turn_detection כאן אם תרצה כבר ברמת הסשן
+        // turn_detection: { type: 'server_vad' }
       }),
     });
 
-    if (!rt.ok) {
-      const msg = await rt.text();
-      throw new Error(`Realtime session failed: ${msg}`);
+    const data = await rtResp.json();
+
+    if (!rtResp.ok) {
+      // משיבים את השגיאה כדי שתופיע בריצה בלוגים
+      return res.status(500).json({ error: 'OpenAI session failed', details: data });
     }
 
-    const session = await rt.json();
-
-    return new Response(JSON.stringify({ session, conversationId }), {
-      headers: { "Content-Type": "application/json" },
+    // 3) מחזירים בדיוק את מה שה-UI מצפה
+    return res.status(200).json({
+      client_secret: data.client_secret, // בד"כ { value: '...' }
+      instructions,
+      voice: 'alloy',
     });
-  } catch (e: any) {
-    return new Response(JSON.stringify({ error: String(e?.message || e) }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" },
-    });
+  } catch (err: any) {
+    console.error('startChat error:', err);
+    return res.status(500).json({ error: err?.message ?? 'Unknown error' });
   }
 }
