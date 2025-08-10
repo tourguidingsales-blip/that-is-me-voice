@@ -1,96 +1,69 @@
 // src/App.tsx
-import { useCallback, useRef, useState } from "react";
-import {
-  connectRealtime,
-  disconnectRealtime,
-  type RealtimeHandle,
-} from "./lib/realtimeClient";
+import { useState } from 'react';
+import { startRealtimeCall, stopRealtimeCall } from './lib/realtimeClient';
 
 export default function App() {
-  const handleRef = useRef<RealtimeHandle | null>(null);
-  const [connecting, setConnecting] = useState(false);
-  const [connected, setConnected] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
-  const start = useCallback(async () => {
-    setError(null);
-    setConnecting(true);
-    try {
-      const h = await connectRealtime({
-        onConnected: () => setConnected(true),
-        onDisconnected: () => setConnected(false),
-        onError: (e) =>
-          setError(e instanceof Error ? e.message : String(e)),
-      });
-      handleRef.current = h;
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setConnecting(false);
-    }
-  }, []);
+  const onStart = async () => {
+    setErr(null);
+    setBusy(true);
+    const res = await startRealtimeCall();
+    if (!res.ok) setErr(`שגיאה: ${res.error}`);
+    setBusy(false);
+  };
 
-  const stop = useCallback(async () => {
-    try {
-      await disconnectRealtime(handleRef.current);
-      handleRef.current = null;
-      setConnected(false);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  }, []);
+  const onStop = () => {
+    stopRealtimeCall();
+  };
 
   return (
-    <div style={{ maxWidth: 760, margin: "60px auto", padding: 24, textAlign: "center", direction: "rtl" }}>
-      <h1>That Is Me</h1>
-      <p>לחץ על "התחלת שיחה" כדי להתחיל בשיחה קולית. השיחה תתחיל מיד לאחר אישור שימוש במיקרופון.</p>
+    <div style={{ maxWidth: 700, margin: '40px auto', textAlign: 'center', fontFamily: 'system-ui, sans-serif' }}>
+      <h1 style={{ fontSize: 28, marginBottom: 12 }}>That Is Me</h1>
+      <p style={{ marginBottom: 20 }}>
+        לחץ על "התחלת שיחה" כדי להתחיל בשיחה קולית. השיחה תתחיל מיד לאחר אישור שימוש במיקרופון.
+      </p>
 
-      {!connected ? (
+      <div style={{ display: 'flex', gap: 12, justifyContent: 'center', marginBottom: 16 }}>
         <button
-          onClick={start}
-          disabled={connecting}
+          onClick={onStart}
+          disabled={busy}
           style={{
-            padding: "14px 22px",
-            background: "#2563eb",
-            color: "#fff",
-            borderRadius: 8,
-            border: "none",
-            cursor: "pointer",
+            padding: '14px 22px',
             fontSize: 18,
+            borderRadius: 10,
+            border: 'none',
+            cursor: busy ? 'not-allowed' : 'pointer',
+            background: '#1a73e8',
+            color: 'white',
           }}
         >
-          {connecting ? "מתחבר..." : "התחלת שיחה 🎙️"}
+          🎙️ התחלת שיחה
         </button>
-      ) : (
         <button
-          onClick={stop}
+          onClick={onStop}
           style={{
-            padding: "14px 22px",
-            background: "#e11d48",
-            color: "#fff",
-            borderRadius: 8,
-            border: "none",
-            cursor: "pointer",
+            padding: '14px 22px',
             fontSize: 18,
+            borderRadius: 10,
+            border: '1px solid #ddd',
+            background: 'white',
+            cursor: 'pointer',
           }}
         >
-          סיום שיחה
+          ⏹️ סיום שיחה
         </button>
-      )}
+      </div>
 
-      {error && (
-        <div
-          style={{
-            marginTop: 20,
-            padding: 12,
-            background: "#fee2e2",
-            color: "#991b1b",
-            borderRadius: 8,
-          }}
-        >
-          שגיאה: {error}
+      {err && (
+        <div style={{ background: '#ffe6e6', color: '#a50000', padding: '12px 16px', borderRadius: 8 }}>
+          {err}
         </div>
       )}
+
+      {/* אלמנט האודיו לניגון ה-remote (נוצר גם דינמית בקוד, אבל נשאיר כאן כדי שתראה אותו) */}
+      <audio id="remote-audio" autoPlay playsInline style={{ display: 'none' }} />
     </div>
   );
 }
