@@ -1,5 +1,6 @@
 // api/startChat.ts — Edge Runtime (Vercel)
-// יוצר סשן Realtime מול OpenAI. ההנחיות באות מ-PROMPT_TEXT (string).
+// מייצר סשן Realtime מול OpenAI כשההנחיות נמשכות ישירות מה-OpenAI Dashboard בעזרת PROMPT_ID.
+
 export const config = { runtime: "edge" };
 
 export default async function handler(req: Request) {
@@ -10,21 +11,19 @@ export default async function handler(req: Request) {
   const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
   if (!OPENAI_API_KEY) {
     return new Response(JSON.stringify({ error: "Missing OPENAI_API_KEY" }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" },
+      status: 500, headers: { "Content-Type": "application/json" },
     });
   }
+
+  // שמור את ה-Prompt ID מהדשבורד ב-Vercel כ-ENV בשם PROMPT_ID
+  const PROMPT_ID =
+    process.env.PROMPT_ID || "pmpt_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX";
 
   const SUPABASE_URL = process.env.SUPABASE_URL;
   const SUPABASE_SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE;
 
-  // חשוב: חייב להיות STRING. שים כאן את כל הטקסט שלך כולל משפט הפתיחה המדויק
-  const PROMPT_TEXT =
-    process.env.PROMPT_TEXT ??
-    `את מראיינת נשית, אמפתית ומקצועית. עברית בלבד. אל תפתחי לבד; דברי רק בהתאם לשיחה.`;
-
   try {
-    // (אופציונלי) יצירת שיחה בסופאבייס כדי להחזיר conversationId
+    // אופציונלי: יצירת conversation בסופאבייס כדי להחזיר מזהה
     let conversationId = crypto.randomUUID();
     if (SUPABASE_URL && SUPABASE_SERVICE_ROLE) {
       const convRes = await fetch(`${SUPABASE_URL}/rest/v1/conversations`, {
@@ -42,7 +41,8 @@ export default async function handler(req: Request) {
       conversationId = conv.id;
     }
 
-    // יצירת סשן Realtime: instructions חייב להיות מחרוזת
+    // יצירת סשן Realtime:
+    // שים לב: אין instructions מחרוזת; משתמשים prompt_id ברמת ה-session.
     const rt = await fetch("https://api.openai.com/v1/realtime/sessions", {
       method: "POST",
       headers: {
@@ -53,17 +53,15 @@ export default async function handler(req: Request) {
         model: "gpt-4o-realtime-preview",
         modalities: ["audio", "text"],
         voice: "alloy",
-        // ערכים נתמכים: 'server_vad' או 'semantic_vad'. אפשר גם להשמיט לגמרי.
-        turn_detection: { type: "server_vad" },
-        instructions: PROMPT_TEXT, // ← כאן צריך להיות כל הפרומפט שלך כמחרוזת
+        turn_detection: { type: "server_vad" }, // ערכים תקינים: server_vad / semantic_vad
+        prompt_id: PROMPT_ID,                   // ← כאן נכנס ה-Prompt ID מהדשבורד
       }),
     });
 
     if (!rt.ok) {
       const msg = await rt.text();
       return new Response(JSON.stringify({ error: msg }), {
-        status: rt.status,
-        headers: { "Content-Type": "application/json" },
+        status: rt.status, headers: { "Content-Type": "application/json" },
       });
     }
 
@@ -74,8 +72,7 @@ export default async function handler(req: Request) {
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     return new Response(JSON.stringify({ error: msg }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" },
+      status: 500, headers: { "Content-Type": "application/json" },
     });
   }
 }
