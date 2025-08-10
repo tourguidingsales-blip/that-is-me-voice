@@ -1,106 +1,121 @@
-import React, { useRef, useState, useEffect } from "react";
-import RealtimeVoiceCard from "./components/RealtimeVoiceCard";
+// src/App.tsx
+import { useCallback, useRef, useState } from "react";
 import {
   connectRealtime,
   disconnectRealtime,
   type RealtimeHandle,
 } from "./lib/realtimeClient";
 
-// אותו משפט פתיחה – נשלח גם מהלקוח כגיבוי נוסף
-const OPENING_LINE =
-  'היי, ברוכים הבאים לתחקיר לקראת הראיון המצולם! איך יהיה נוח שאפנה במהלך השיחה – בלשון זכר, נקבה, או אחרת? ומה השם בבקשה?';
-
-type Status = "idle" | "connecting" | "connected" | "stopped" | "error";
-
 export default function App() {
-  const h = useRef<RealtimeHandle | null>(null);
-  const [status, setStatus] = useState<Status>("idle");
+  const handleRef = useRef<RealtimeHandle | null>(null);
+  const [connecting, setConnecting] = useState(false);
+  const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [transcript, setTranscript] = useState<string>("");
 
-  async function startChat() {
-    setStatus("connecting");
+  const appendText = useCallback((chunk: string) => {
+    setTranscript((prev) => prev + chunk);
+  }, []);
+
+  const start = useCallback(async () => {
     setError(null);
-
+    setConnecting(true);
     try {
-      // 1) בקשת סשן מהשרת כדי לקבל client_secret
-      const res = await fetch("/api/startChat", { method: "POST" });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error((data && (data.error || data.message)) || "startChat failed");
-      }
-      const clientSecret: string | undefined = data?.session?.client_secret?.value;
-      if (!clientSecret) throw new Error("Missing client_secret from /api/startChat");
-
-      // 2) חיבור ל-Realtime
-      h.current = await connectRealtime({
-        clientSecret,
-        onConnected: () => {
-          setStatus("connected");
-
-          // גיבוי נוסף: שולחים שוב את משפט הפתיחה לאחר עליית הערוץ,
-          // למקרה שהמודל אמר משהו אחר. שולחים פעמיים בהשהיה קצרה.
-          try {
-            const send = (delay: number) =>
-              setTimeout(() => {
-                try {
-                  h.current?.dc?.send(
-                    JSON.stringify({
-                      type: "response.create",
-                      response: { conversation: "none", instructions: OPENING_LINE },
-                    })
-                  );
-                } catch {}
-              }, delay);
-
-            send(120); // מיד אחרי ההתחברות
-            send(500); // חיזוק נוסף
-          } catch {}
-        },
-        onDisconnected: () => setStatus("stopped"),
-        onError: (e) => {
-          const msg =
-            e instanceof Error ? e.message : typeof e === "string" ? e : String(e);
-          setError(msg);
-          setStatus("error");
-        },
+      const h = await connectRealtime({
+        onAssistantText: appendText,
+        onConnected: () => setConnected(true),
+        onDisconnected: () => setConnected(false),
+        onError: (e) =>
+          setError(e instanceof Error ? e.message : String(e)),
       });
-    } catch (err: unknown) {
-      const msg =
-        err instanceof Error ? err.message : typeof err === "string" ? err : String(err);
-      setError(msg);
-      setStatus("error");
-    }
-  }
-
-  async function stopChat() {
-    try {
-      await disconnectRealtime(h.current);
-    } catch {
-      // מתעלמים משגיאות סגירה
+      handleRef.current = h;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
-      h.current = null;
-      setStatus("stopped");
+      setConnecting(false);
     }
-  }
+  }, [appendText]);
 
-  // ניקוי חיבור אם יוצאים מהעמוד
-  useEffect(() => {
-    return () => {
-      if (h.current) disconnectRealtime(h.current);
-    };
+  const stop = useCallback(async () => {
+    try {
+      await disconnectRealtime(handleRef.current);
+      handleRef.current = null;
+      setConnected(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
   }, []);
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      <RealtimeVoiceCard status={status} onStart={startChat} onStop={stopChat} />
+    <div style={{ maxWidth: 760, margin: "60px auto", padding: 24 }}>
+      <h1 style={{ textAlign: "center" }}>That Is Me</h1>
+      <p style={{ textAlign: "center" }}>
+        לחץ על "התחלת שיחה" כדי להתחיל בשיחה קולית. השיחה תתחיל מיד לאחר אישור
+        שימוש במיקרופון.
+      </p>
+
+      <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
+        {!connected ? (
+          <button
+            onClick={start}
+            disabled={connecting}
+            style={{
+              padding: "12px 18px",
+              background: "#2563eb",
+              color: "white",
+              borderRadius: 8,
+              border: "none",
+              cursor: "pointer",
+            }}
+          >
+            {connecting ? "מתחבר..." : "התחלת שיחה 🎙️"}
+          </button>
+        ) : (
+          <button
+            onClick={stop}
+            style={{
+              padding: "12px 18px",
+              background: "#e11d48",
+              color: "white",
+              borderRadius: 8,
+              border: "none",
+              cursor: "pointer",
+            }}
+          >
+            סיום שיחה
+          </button>
+        )}
+      </div>
 
       {error && (
-        <div dir="rtl" className="mx-auto mt-4 w-[680px] max-w-[92vw]">
-          <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-rose-800">
-            שגיאה: {error}
-          </div>
+        <div
+          style={{
+            marginTop: 20,
+            padding: 12,
+            background: "#fee2e2",
+            color: "#991b1b",
+            borderRadius: 8,
+          }}
+        >
+          שגיאה: {error}
         </div>
       )}
+
+      <div
+        style={{
+          marginTop: 24,
+          padding: 16,
+          border: "1px solid #e5e7eb",
+          borderRadius: 8,
+          minHeight: 140,
+          whiteSpace: "pre-wrap",
+          direction: "rtl",
+          textAlign: "right",
+          background: "#fafafa",
+        }}
+      >
+        {transcript || "כאן יופיעו הכתוביות במהלך השיחה..."}
+      </div>
     </div>
   );
 }
