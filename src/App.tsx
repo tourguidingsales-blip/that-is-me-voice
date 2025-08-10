@@ -14,9 +14,7 @@ export default function App() {
     setBusy(false);
   };
 
-  const onStop = () => {
-    stopRealtimeCall();
-  };
+  const onStop = () => stopRealtimeCall();
 
   return (
     <div style={{ maxWidth: 700, margin: '40px auto', textAlign: 'center', fontFamily: 'system-ui, sans-serif' }}>
@@ -62,8 +60,8 @@ export default function App() {
         </div>
       )}
 
-      {/* אלמנט האודיו לניגון ה-remote (נוצר גם דינמית בקוד, אבל נשאיר כאן כדי שתראה אותו) */}
-      <audio id="remote-audio" autoPlay playsInline style={{ display: 'none' }} />
+      {/* אלמנט האודיו לניגון ה-remote (ללא playsInline ב-TSX) */}
+      <audio id="remote-audio" autoPlay style={{ display: 'none' }} />
     </div>
   );
 }
