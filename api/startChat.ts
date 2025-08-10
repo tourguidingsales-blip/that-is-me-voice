@@ -62,7 +62,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // 3) מחזירים ללקוח גם את ההנחיות וגם את הקול
     return res.status(200).json({
-      client_secret,
+      client_secret,           // לרוב אובייקט { value, expires_at }
       instructions,
       voice: 'alloy',
     });
